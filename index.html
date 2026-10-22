@@ -120,6 +120,11 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .ptop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
 .ptop select{width:auto;padding:8px 11px;font-size:.88rem;}
 .ptop .lbl{font-size:.85rem;font-weight:600;}
+.pdatas{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pdatas label{margin:0;font-size:.85rem;font-weight:600;}
+.pdatas input{width:auto;padding:7px 10px;font-size:.88rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;}
+.pdatas input:focus{outline:none;border-color:var(--primary);}
+#pAviso{font-size:.8rem;color:var(--red);width:100%;}
 .backlog{background:#1e2530;color:#fff;border-radius:var(--r);padding:14px 18px;margin-bottom:16px;display:flex;gap:26px;flex-wrap:wrap;align-items:center;font-size:.88rem;}
 .backlog b{font-size:1.35rem;margin-right:5px;}
 .backlog .t{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.7;width:100%;margin-bottom:-14px;}
@@ -282,7 +287,12 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
         <option value="90">Últimos 90 dias</option>
         <option value="ano">Ano atual</option>
         <option value="tudo">Todo o histórico</option>
+        <option value="pers">Personalizado (escolher datas)</option>
       </select>
+      <span id="pDatas" class="pdatas" style="display:none;">
+        <label for="pIni">De</label><input type="date" id="pIni">
+        <label for="pFim">até</label><input type="date" id="pFim">
+      </span>
       <select id="pDest" style="display:none;"></select>
     </div>
     <div class="backlog" id="pBacklog"></div>
@@ -591,7 +601,9 @@ function montarFiltros(){
   if(!filtrosMontados){
     ['fSt','fUrg','fCat'].forEach(function(i){ g(i).addEventListener('change',renderLista); });
     g('fBusca').addEventListener('input',renderLista);
-    g('pPer').addEventListener('change',renderPainel);
+    g('pPer').addEventListener('change',trocarPeriodo);
+    g('pIni').addEventListener('change',renderPainel);
+    g('pFim').addEventListener('change',renderPainel);
     g('pDest').addEventListener('change',function(){ renderPainel(); renderLista(); });
     filtrosMontados=true;
   }
@@ -699,9 +711,26 @@ g('modal').addEventListener('click',function(e){ if(e.target===this) fecharModal
 document.addEventListener('keydown',function(e){ if(e.key==='Escape') fecharModal(); });
 
 /* ---------- Painel ---------- */
+function ymd(d){ return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+function trocarPeriodo(){
+  var pers=g('pPer').value==='pers';
+  g('pDatas').style.display=pers?'inline-flex':'none';
+  if(pers && !g('pIni').value){
+    var h=new Date();
+    g('pIni').value=ymd(new Date(h.getFullYear(),h.getMonth(),1));
+    g('pFim').value=ymd(h);
+  }
+  renderPainel();
+}
 function noPeriodo(c,per){
   var d=new Date(c.dataAbertura), h=new Date();
   if(per==='tudo') return true;
+  if(per==='pers'){
+    var ini=g('pIni').value, fim=g('pFim').value, dia=ymd(d);
+    if(ini && dia<ini) return false;
+    if(fim && dia>fim) return false;
+    return true;
+  }
   if(per==='mes') return d.getFullYear()===h.getFullYear() && d.getMonth()===h.getMonth();
   if(per==='ano') return d.getFullYear()===h.getFullYear();
   return (h-d)/864e5 <= Number(per);
@@ -725,6 +754,9 @@ var COR_ST={'Aberto':'#6b7280','Em andamento':'#ca8a04','Aguardando material/ter
 var COR_UR={'Crítica':'#c8102e','Alta':'#f97316','Normal':'#9ca3af'};
 function renderPainel(){
   var per=g('pPer').value, dd=g('pDest').value;
+  if(per==='pers' && g('pIni').value && g('pFim').value && g('pIni').value>g('pFim').value){
+    toast('A data inicial é posterior à data final.');
+  }
   var base=DADOS.filter(function(c){ return !dd || c.areaDestino===dd; });
   var L=base.filter(function(c){ return noPeriodo(c,per); });
 
