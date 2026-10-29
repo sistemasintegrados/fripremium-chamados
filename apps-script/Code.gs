@@ -25,7 +25,10 @@ var ABA = {
 
 var COLS = ['Protocolo', 'DataAbertura', 'Solicitante', 'SetorSolicitante', 'Local', 'DetalheLocal',
   'AreaDestino', 'Categoria', 'Urgencia', 'Descricao', 'FotoId', 'Status', 'DataInicio',
-  'DataResolucao', 'Resolucao', 'UltimaAtualizacao', 'AtualizadoPor'];
+  'DataResolucao', 'Resolucao', 'UltimaAtualizacao', 'AtualizadoPor', 'Origem'];
+
+var ORIGEM_PUBLICA = 'Solicitado';
+var ORIGEM_INTERNA = 'Identificado pela manutenção';
 
 var COLS_HIST = ['Protocolo', 'DataHora', 'Usuario', 'StatusAnterior', 'StatusNovo', 'Comentario'];
 var COLS_USU = ['CPF', 'Nome', 'Perfil', 'AreaDestino', 'SenhaHash', 'Salt', 'Ativo'];
@@ -146,6 +149,7 @@ function doPost(e) {
   try {
     switch (req.acao) {
       case 'abrir': return json_(abrir_(req));
+      case 'abrirInterno': return json_(abrirInterno_(sessao_(req.token), req));
       case 'verificarCpf': return json_(verificarCpf_(req.cpf));
       case 'definirSenha': return json_(definirSenha_(req.cpf, req.senha));
       case 'login': return json_(login_(req.cpf, req.senha));
@@ -181,7 +185,17 @@ function opcoes_() {
 }
 
 function abrir_(r) {
-  var nome = limpa_(r.nome, 80);
+  return criarChamado_(r, limpa_(r.nome, 80), ORIGEM_PUBLICA, ' (solicitante)');
+}
+
+/** Chamado aberto pelo próprio responsável, dentro da área restrita. */
+function abrirInterno_(s, r) {
+  if (!s.podeEditar || !s.area || s.area === '*') return { ok: false, erro: 'Seu perfil não pode abrir chamados por aqui.' };
+  r.destino = s.area;
+  return criarChamado_(r, s.nome, ORIGEM_INTERNA, ' (responsável)');
+}
+
+function criarChamado_(r, nome, origem, sufixoHist) {
   var setor = limpa_(r.setor, 60);
   var local = limpa_(r.local, 60);
   var detalhe = limpa_(r.detalheLocal, 120);
@@ -213,10 +227,15 @@ function abrir_(r) {
       Protocolo: protocolo, DataAbertura: agora, Solicitante: nome, SetorSolicitante: setor,
       Local: local, DetalheLocal: detalhe, AreaDestino: destino, Categoria: categoria,
       Urgencia: urgencia, Descricao: descricao, FotoId: fotoId, Status: 'Aberto',
-      DataInicio: '', DataResolucao: '', Resolucao: '', UltimaAtualizacao: agora, AtualizadoPor: nome
+      DataInicio: '', DataResolucao: '', Resolucao: '', UltimaAtualizacao: agora, AtualizadoPor: nome,
+      Origem: origem
     };
-    sh_(ABA.CHAMADOS).appendRow(COLS.map(function (c) { return linha[c]; }));
-    registrarHist_(protocolo, nome + ' (solicitante)', '', 'Aberto', 'Chamado aberto');
+    var shc = sh_(ABA.CHAMADOS);
+    if (shc.getRange(1, COLS.length).getValue() !== 'Origem') {
+      shc.getRange(1, COLS.length).setValue('Origem').setFontWeight('bold').setBackground('#c8102e').setFontColor('#ffffff');
+    }
+    shc.appendRow(COLS.map(function (c) { return linha[c]; }));
+    registrarHist_(protocolo, nome + sufixoHist, '', 'Aberto', origem === ORIGEM_INTERNA ? 'Chamado aberto pelo responsável' : 'Chamado aberto');
     if (fotoId) {
       try { DriveApp.getFileById(fotoId).setName(protocolo + '.jpg'); } catch (e) {}
     }
@@ -454,7 +473,8 @@ function saida_(c) {
     areaDestino: c.AreaDestino, categoria: c.Categoria, urgencia: c.Urgencia,
     descricao: c.Descricao, temFoto: !!c.FotoId, status: c.Status, dataInicio: iso_(c.DataInicio),
     dataResolucao: iso_(c.DataResolucao), resolucao: c.Resolucao,
-    ultimaAtualizacao: iso_(c.UltimaAtualizacao), atualizadoPor: c.AtualizadoPor
+    ultimaAtualizacao: iso_(c.UltimaAtualizacao), atualizadoPor: c.AtualizadoPor,
+    origem: c.Origem || ORIGEM_PUBLICA
   };
 }
 

@@ -120,6 +120,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .ptop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
 .ptop select{width:auto;padding:8px 11px;font-size:.88rem;}
 .ptop .lbl{font-size:.85rem;font-weight:600;}
+.rbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-6px 0 12px;}
 .pdatas{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .pdatas label{margin:0;font-size:.85rem;font-weight:600;}
 .pdatas input{width:auto;padding:7px 10px;font-size:.88rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;}
@@ -275,7 +276,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
     <button class="tab on" data-res="rPainel">Painel</button>
     <button class="tab" data-res="rLista">Chamados</button>
   </div>
-  <div style="text-align:right;margin:-8px 0 10px;"><button class="lnk" id="btnAtualizar">Atualizar dados</button> <span class="hint" id="atuHora"></span></div>
+  <div class="rbar">
+    <button class="btn bp sm" id="btnNovoInt" style="display:none;width:auto;margin:0;">+ Novo chamado</button>
+    <span style="margin-left:auto"><button class="lnk" id="btnAtualizar">Atualizar dados</button> <span class="hint" id="atuHora"></span></span>
+  </div>
 
   <!-- Painel -->
   <div id="rPainel">
@@ -401,8 +405,8 @@ var FOTO=null;
 g('btnFoto').addEventListener('click',function(){ g('aFoto').click(); });
 g('btnFotoRm').addEventListener('click',limparFoto);
 function limparFoto(){ FOTO=null; g('aFoto').value=''; g('aFotoPrev').style.display='none'; g('btnFotoRm').style.display='none'; g('btnFoto').textContent='Adicionar foto'; }
-g('aFoto').addEventListener('change',function(){
-  var f=this.files&&this.files[0]; if(!f) return;
+function comprimirFoto(f,cb){
+  if(!f) return;
   if(!/^image\//.test(f.type)){ toast('Selecione um arquivo de imagem.'); return; }
   var rd=new FileReader();
   rd.onload=function(){
@@ -412,14 +416,19 @@ g('aFoto').addEventListener('change',function(){
       var cv=document.createElement('canvas'); cv.width=Math.round(w*k); cv.height=Math.round(h*k);
       cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
       var url=cv.toDataURL('image/jpeg',0.72);
-      FOTO={mime:'image/jpeg',b64:url.split(',')[1]};
-      g('aFotoPrev').src=url; g('aFotoPrev').style.display='block';
-      g('btnFotoRm').style.display='inline'; g('btnFoto').textContent='Trocar foto';
+      cb(url,{mime:'image/jpeg',b64:url.split(',')[1]});
     };
     img.onerror=function(){ toast('Não foi possível ler esta imagem.'); };
     img.src=rd.result;
   };
   rd.readAsDataURL(f);
+}
+g('aFoto').addEventListener('change',function(){
+  comprimirFoto(this.files&&this.files[0],function(url,foto){
+    FOTO=foto;
+    g('aFotoPrev').src=url; g('aFotoPrev').style.display='block';
+    g('btnFotoRm').style.display='inline'; g('btnFoto').textContent='Trocar foto';
+  });
 });
 
 g('btnAbrir').addEventListener('click',function(){
@@ -559,6 +568,7 @@ function entrarRestrito(){
   if(!USU){ sair(); return; }
   g('huNome').textContent=USU.nome+(USU.podeEditar?'':' · visualização');
   g('hu').style.display='flex';
+  g('btnNovoInt').style.display=(USU.podeEditar && USU.area && USU.area!=='*')?'':'none';
   document.querySelector('[data-res=rPainel]').click();
   mostrar('sRes'); carregarDados();
 }
@@ -650,6 +660,7 @@ function abrirDetalhe(p){
   h+='<dt>Solicitante</dt><dd>'+esc(c.solicitante)+(c.setorSolicitante?' — '+esc(c.setorSolicitante):'')+'</dd>';
   h+='<dt>Local</dt><dd>'+esc(c.local)+(c.detalheLocal?' — '+esc(c.detalheLocal):'')+'</dd>';
   h+='<dt>Categoria</dt><dd>'+esc(c.categoria)+(USU.area==='*'?' · '+esc(c.areaDestino):'')+'</dd>';
+  h+='<dt>Origem</dt><dd>'+esc(c.origem||'Solicitado')+'</dd>';
   h+='<dt>Aberto em</dt><dd>'+fData(c.dataAbertura)+'</dd>';
   h+='<dt>Prazo-alvo</dt><dd>'+fData(prazo(c).toISOString())+' <span class="hint">('+SLA[c.urgencia]+' h)</span></dd>';
   if(c.dataInicio) h+='<dt>Início do atendimento</dt><dd>'+fData(c.dataInicio)+'</dd>';
@@ -706,6 +717,56 @@ function verFoto(p,btn){
     g('mFoto').innerHTML='<img alt="Foto do chamado" src="data:'+esc(r.mime)+';base64,'+r.b64+'">';
   }).catch(function(e){ carregando(btn,false); falhaRede(e); });
 }
+/* ---------- Novo chamado interno (responsável) ---------- */
+var FOTO_INT=null;
+g('btnNovoInt').addEventListener('click',abrirNovoInterno);
+function abrirNovoInterno(){
+  if(!OP){ toast('Opções ainda carregando. Tente novamente em instantes.'); return; }
+  FOTO_INT=null;
+  var cats=(OP.categorias[USU.area]||[]);
+  var opt=function(l){ return '<option value="">Selecione…</option>'+l.map(function(v){return '<option>'+esc(v)+'</option>';}).join(''); };
+  var h='<button class="mclose" id="mX" aria-label="Fechar">×</button>';
+  h+='<h2 style="font-size:1.1rem;color:var(--primary);margin-bottom:4px;">Novo chamado</h2>';
+  h+='<p class="hint" style="margin-bottom:16px;">Solicitante: <b>'+esc(USU.nome)+'</b> · área '+esc(USU.area)+'. Fica registrado como identificado pela manutenção.</p>';
+  h+='<div class="row"><div class="f"><label for="nLocal">Local do problema <span class="req">*</span></label><select id="nLocal">'+opt(OP.setores)+'</select></div>';
+  h+='<div class="f"><label for="nDet">Ponto exato</label><input type="text" id="nDet" maxlength="120" placeholder="Ex.: câmara 2, porta lateral"></div></div>';
+  h+='<div class="f"><label for="nCat">Categoria <span class="req">*</span></label><select id="nCat">'+opt(cats)+'</select></div>';
+  h+='<div class="f"><label>Urgência <span class="req">*</span></label><div class="urg" id="nUrg">'+
+     '<input type="radio" name="nurg" id="nu1" value="Crítica"><label for="nu1"><b>Crítica</b><span>Risco à segurança ou produção parada</span></label>'+
+     '<input type="radio" name="nurg" id="nu2" value="Alta"><label for="nu2"><b>Alta</b><span>Compromete a operação, há contorno</span></label>'+
+     '<input type="radio" name="nurg" id="nu3" value="Normal"><label for="nu3"><b>Normal</b><span>Predial e pequenos reparos</span></label></div></div>';
+  h+='<div class="f"><label for="nDesc">Descrição <span class="req">*</span></label><textarea id="nDesc" maxlength="2000"></textarea></div>';
+  h+='<div class="f"><label>Foto <span style="font-weight:400;color:var(--muted)">(opcional)</span></label><div class="foto-box"><img id="nFotoPrev" alt="" style="display:none"><input type="file" id="nFoto" accept="image/*" style="display:none"><button class="btn bo sm" id="nBtnFoto" type="button">Adicionar foto</button></div></div>';
+  h+='<button class="btn bp" id="nSalvar">Registrar chamado</button>';
+  g('mBox').innerHTML=h; g('modal').classList.add('on'); document.body.style.overflow='hidden';
+  g('mX').addEventListener('click',fecharModal);
+  g('nBtnFoto').addEventListener('click',function(){ g('nFoto').click(); });
+  g('nFoto').addEventListener('change',function(){
+    comprimirFoto(this.files&&this.files[0],function(url,foto){ FOTO_INT=foto; g('nFotoPrev').src=url; g('nFotoPrev').style.display='block'; g('nBtnFoto').textContent='Trocar foto'; });
+  });
+  g('nSalvar').addEventListener('click',function(){ salvarInterno(this); });
+  ['input','change'].forEach(function(ev){ g('mBox').addEventListener(ev,function(e){ if(e.target.classList) e.target.classList.remove('erro'); if(e.target.name==='nurg') g('nUrg').classList.remove('erro'); }); });
+}
+function salvarInterno(btn){
+  var urg=document.querySelector('input[name=nurg]:checked');
+  var d={acao:'abrirInterno',token:ss('fp_tok'),local:g('nLocal').value,detalheLocal:g('nDet').value.trim(),
+    categoria:g('nCat').value,urgencia:urg?urg.value:'',descricao:g('nDesc').value.trim(),foto:FOTO_INT};
+  var falt=[];
+  if(!d.local){ g('nLocal').classList.add('erro'); falt.push('local'); }
+  if(!d.categoria){ g('nCat').classList.add('erro'); falt.push('categoria'); }
+  if(!d.urgencia){ g('nUrg').classList.add('erro'); falt.push('urgência'); }
+  if(d.descricao.length<10){ g('nDesc').classList.add('erro'); falt.push('descrição'); }
+  if(falt.length){ toast('Preencha: '+falt.join(', ')+'.'); return; }
+  carregando(btn,true,'Registrando…');
+  apiPost(d).then(function(r){
+    carregando(btn,false);
+    if(r.sessaoExpirada){ fecharModal(); sair('Sessão expirada. Entre novamente.'); return; }
+    if(!r.ok){ toast(r.erro||'Erro ao registrar.'); return; }
+    fecharModal(); toast('Chamado '+r.protocolo+' registrado.',4000);
+    carregarDados();
+  }).catch(function(e){ carregando(btn,false); falhaRede(e); });
+}
+
 function fecharModal(){ g('modal').classList.remove('on'); document.body.style.overflow=''; }
 g('modal').addEventListener('click',function(e){ if(e.target===this) fecharModal(); });
 document.addEventListener('keydown',function(e){ if(e.key==='Escape') fecharModal(); });
