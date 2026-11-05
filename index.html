@@ -139,7 +139,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .backlog b{font-size:1.35rem;margin-right:5px;}
 .backlog .t{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.7;width:100%;margin-bottom:-14px;}
 .backlog .crit b{color:#fda4af;}
-.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;}
+.kpis{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-bottom:16px;}
 .kpi{background:#fff;border-radius:var(--r);box-shadow:var(--sh);padding:16px 14px;}
 .kpi .v{font-size:1.7rem;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;}
 .kpi .l{font-size:.78rem;color:var(--muted);margin-top:4px;}
@@ -637,10 +637,17 @@ function carregarDados(){
 function prazoPadrao(c){ return new Date(new Date(c.dataAbertura).getTime()+(SLA[c.urgencia]||168)*36e5); }
 function prazo(c){ return c.prazoDefinido ? new Date(c.prazoDefinido) : prazoPadrao(c); }
 function isoDia(iso){ if(!iso) return ''; var d=new Date(iso); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+/* Indicador oficial: sempre pelo prazo padrão da urgência */
 function atrasado(c){
   if(c.status==='Cancelado') return false;
-  if(c.status==='Resolvido') return new Date(c.dataResolucao)>prazo(c);
-  return new Date()>prazo(c);
+  if(c.status==='Resolvido') return new Date(c.dataResolucao)>prazoPadrao(c);
+  return new Date()>prazoPadrao(c);
+}
+/* Previsão informada pelo responsável (só quando existe) */
+function previsaoVencida(c){
+  if(!c.prazoDefinido || c.status==='Cancelado') return false;
+  if(c.status==='Resolvido') return new Date(c.dataResolucao)>new Date(c.prazoDefinido);
+  return new Date()>new Date(c.prazoDefinido);
 }
 
 /* ---------- Lista ---------- */
@@ -695,7 +702,7 @@ function renderLista(){
     return '<div class="it u-'+esc(c.urgencia)+'" data-p="'+esc(c.protocolo)+'">'+
       '<div class="it-top"><span class="it-prot">'+esc(c.protocolo)+'</span>'+chipUr(c.urgencia)+chipSt(c.status)+
       (atrasado(c)?'<span class="chip atr">Fora do prazo</span>':'')+(c.temFoto?'<span class="chip" style="background:#f1f5f9;color:#374151">📷 foto</span>':'')+
-      (c.prazoDefinido&&ABERTOS.indexOf(c.status)>=0?'<span class="chip" style="background:#eef2ff;color:#3730a3">prazo '+fData(c.prazoDefinido,true).slice(0,5)+'</span>':'')+
+      (c.prazoDefinido&&ABERTOS.indexOf(c.status)>=0?(previsaoVencida(c)?'<span class="chip atr">previsão vencida '+fData(c.prazoDefinido,true).slice(0,5)+'</span>':'<span class="chip" style="background:#eef2ff;color:#3730a3">previsão '+fData(c.prazoDefinido,true).slice(0,5)+'</span>'):'')+
       (c.lote?'<span class="chip" style="background:#f1f5f9;color:#374151" title="Aberto junto com outros problemas">grupo '+esc(c.lote.slice(-4))+'</span>':'')+
       '<span class="it-age">'+idade+'</span></div>'+
       '<div class="it-desc">'+esc(c.descricao)+'</div>'+
@@ -716,12 +723,8 @@ function abrirDetalhe(p){
   h+='<dt>Categoria</dt><dd>'+esc(c.categoria)+(USU.area==='*'?' · '+esc(c.areaDestino):'')+'</dd>';
   h+='<dt>Origem</dt><dd>'+esc(c.origem||'Solicitado')+'</dd>';
   h+='<dt>Aberto em</dt><dd>'+fData(c.dataAbertura)+'</dd>';
-  if(c.prazoDefinido){
-    h+='<dt>Prazo definido</dt><dd><b>'+fData(c.prazoDefinido,true)+'</b> <span class="hint">(pelo responsável)</span></dd>';
-    h+='<dt>Prazo padrão</dt><dd>'+fData(prazoPadrao(c).toISOString())+' <span class="hint">('+SLA[c.urgencia]+' h pela urgência)</span></dd>';
-  } else {
-    h+='<dt>Prazo-alvo</dt><dd>'+fData(prazo(c).toISOString())+' <span class="hint">(padrão: '+SLA[c.urgencia]+' h pela urgência)</span></dd>';
-  }
+  h+='<dt>Prazo padrão</dt><dd>'+fData(prazoPadrao(c).toISOString())+' <span class="hint">('+SLA[c.urgencia]+' h pela urgência · usado nos indicadores)</span></dd>';
+  if(c.prazoDefinido) h+='<dt>Previsão do responsável</dt><dd><b>'+fData(c.prazoDefinido,true)+'</b>'+(previsaoVencida(c)?' <span class="chip atr">vencida</span>':'')+' <span class="hint">(informada ao solicitante)</span></dd>';
   if(c.dataInicio) h+='<dt>Início do atendimento</dt><dd>'+fData(c.dataInicio)+'</dd>';
   if(c.dataResolucao) h+='<dt>Encerrado em</dt><dd>'+fData(c.dataResolucao)+' <span class="hint">('+fDur(horasEntre(c.dataAbertura,c.dataResolucao))+')</span></dd>';
   h+='</dl>';
@@ -741,8 +744,8 @@ function abrirDetalhe(p){
     h+='<div class="msec"><h4>Atualizar chamado</h4><div class="upd">';
     h+='<div class="row"><div class="f"><label for="mSt">Status</label><select id="mSt">'+STATUS.map(function(s){return '<option'+(s===c.status?' selected':'')+'>'+esc(s)+'</option>';}).join('')+'</select></div>';
     h+='<div class="f"><label for="mUrg">Urgência</label><select id="mUrg">'+['Crítica','Alta','Normal'].map(function(u){return '<option'+(u===c.urgencia?' selected':'')+'>'+u+'</option>';}).join('')+'</select></div></div>';
-    h+='<div class="f"><label for="mPrazo">Prazo de resolução</label><input type="date" id="mPrazo" value="'+isoDia(c.prazoDefinido)+'" min="'+isoDia(c.dataAbertura)+'" style="max-width:220px">'+
-       '<div class="hint">'+(c.prazoDefinido?'Para alterar o prazo, informe o motivo no comentário.':'Opcional. Sem data, vale o prazo padrão da urgência.')+'</div></div>';
+    h+='<div class="f"><label for="mPrazo">Previsão de resolução</label><input type="date" id="mPrazo" value="'+isoDia(c.prazoDefinido)+'" min="'+isoDia(c.dataAbertura)+'" style="max-width:220px">'+
+       '<div class="hint">'+(c.prazoDefinido?'Para alterar a previsão, informe o motivo no comentário.':'Opcional. Aparece para o solicitante na consulta do protocolo. Não altera o prazo padrão dos indicadores.')+'</div></div>';
     h+='<div class="f" style="margin-bottom:10px"><label for="mCm" id="mCmLbl">Comentário</label><textarea id="mCm" maxlength="2000" style="min-height:80px"></textarea><div class="hint" id="mCmHint"></div></div>';
     h+='<button class="btn bp" id="mSalvar">Salvar atualização</button></div></div>';
   }
@@ -768,7 +771,7 @@ function rotuloCm(){
   if(s==='Resolvido'){ l='O que foi feito *'; hnt='Obrigatório. Aparece para o solicitante na consulta do protocolo.'; }
   else if(s==='Cancelado'){ l='Motivo do cancelamento *'; hnt='Obrigatório. Ex.: chamado duplicado, não procede.'; }
   else if(s==='Aguardando material/terceiro'){ l='O que está sendo aguardado *'; hnt='Obrigatório. Ex.: peça encomendada, visita do técnico.'; }
-  if(mudouPrazo()){ hnt+=' Inclua o motivo da alteração do prazo.'; if(l==='Comentário') l='Comentário *'; }
+  if(mudouPrazo()){ hnt+=' Inclua o motivo da alteração da previsão.'; if(l==='Comentário') l='Comentário *'; }
   g('mCmLbl').textContent=l; g('mCmHint').textContent=hnt;
 }
 var DET_ATUAL=null;
@@ -909,7 +912,7 @@ function renderPainel(){
   var bkAg=bk.filter(function(c){return c.status==='Aguardando material/terceiro';}).length;
   g('pBacklog').innerHTML='<span class="t">Situação atual · todos os períodos</span>'+
     '<span><b>'+bk.length+'</b>em aberto</span><span class="crit"><b>'+bkCrit+'</b>críticos</span>'+
-    '<span class="crit"><b>'+bkAtr+'</b>fora do prazo</span><span><b>'+bkAg+'</b>aguardando material/terceiro</span>';
+    '<span class="crit"><b>'+bkAtr+'</b>fora do prazo padrão</span><span><b>'+bk.filter(previsaoVencida).length+'</b>previsões vencidas</span><span><b>'+bkAg+'</b>aguardando material/terceiro</span>';
 
   var res=L.filter(function(c){return c.status==='Resolvido';});
   var abe=L.filter(function(c){return ABERTOS.indexOf(c.status)>=0;});
@@ -917,13 +920,17 @@ function renderPainel(){
   var tm=res.length?res.reduce(function(s,c){return s+horasEntre(c.dataAbertura,c.dataResolucao);},0)/res.length:null;
   var noPrazo=res.filter(function(c){return !atrasado(c);}).length;
   var pct=res.length?Math.round(noPrazo/res.length*100):null;
+  var resPrev=res.filter(function(c){return !!c.prazoDefinido;});
+  var prevOk=resPrev.filter(function(c){return !previsaoVencida(c);}).length;
+  var pctPrev=resPrev.length?Math.round(prevOk/resPrev.length*100):null;
   var k=[
     ['Chamados no período',L.length,'','pri'],
     ['Em aberto',abe.length,L.length?Math.round(abe.length/L.length*100)+'% do período':'',''],
     ['Resolvidos',res.length,L.length?Math.round(res.length/L.length*100)+'% do período':'','ok'],
     ['Cancelados',canc.length,'',''],
     ['Tempo médio de resolução',fDur(tm),res.length?'base: '+res.length+' resolvido'+(res.length>1?'s':''):'sem resolvidos',''],
-    ['Resolvidos no prazo',pct==null?'—':pct+'%',res.length?noPrazo+' de '+res.length:'',pct!=null&&pct>=80?'ok':'pri']
+    ['Resolvidos no prazo padrão',pct==null?'—':pct+'%',res.length?noPrazo+' de '+res.length:'',pct!=null&&pct>=80?'ok':'pri'],
+    ['Previsões cumpridas',pctPrev==null?'—':pctPrev+'%',resPrev.length?prevOk+' de '+resPrev.length+' com previsão':'sem previsões no período',pctPrev!=null&&pctPrev>=80?'ok':'pri']
   ];
   g('pKpis').innerHTML=k.map(function(x){ return '<div class="kpi '+x[3]+'"><div class="v">'+x[1]+'</div><div class="l">'+x[0]+'</div>'+(x[2]?'<div class="s">'+x[2]+'</div>':'')+'</div>'; }).join('');
 

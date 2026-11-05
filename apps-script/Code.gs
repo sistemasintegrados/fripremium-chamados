@@ -454,8 +454,8 @@ function atualizar_(s, r) {
       if (novoPrazo < abertura) return { ok: false, erro: 'O prazo não pode ser anterior à abertura do chamado.' };
       var antigo = c.PrazoDefinido instanceof Date ? c.PrazoDefinido : (c.PrazoDefinido ? new Date(c.PrazoDefinido) : null);
       if (!antigo || antigo.getTime() !== novoPrazo.getTime()) {
-        if (antigo && coment.length < 5) return { ok: false, erro: 'Informe no comentário o motivo da alteração do prazo.' };
-        notas.push(antigo ? 'Prazo alterado: ' + dataBr_(antigo) + ' → ' + dataBr_(novoPrazo) : 'Prazo definido: ' + dataBr_(novoPrazo));
+        if (antigo && coment.length < 5) return { ok: false, erro: 'Informe no comentário o motivo da alteração da previsão.' };
+        notas.push(antigo ? 'Previsão alterada: ' + dataBr_(antigo) + ' → ' + dataBr_(novoPrazo) : 'Previsão definida: ' + dataBr_(novoPrazo));
         c.PrazoDefinido = novoPrazo;
       }
     }
