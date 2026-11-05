@@ -25,7 +25,8 @@ var ABA = {
 
 var COLS = ['Protocolo', 'DataAbertura', 'Solicitante', 'SetorSolicitante', 'Local', 'DetalheLocal',
   'AreaDestino', 'Categoria', 'Urgencia', 'Descricao', 'FotoId', 'Status', 'DataInicio',
-  'DataResolucao', 'Resolucao', 'UltimaAtualizacao', 'AtualizadoPor', 'Origem'];
+  'DataResolucao', 'Resolucao', 'UltimaAtualizacao', 'AtualizadoPor', 'Origem', 'PrazoDefinido', 'Lote'];
+var MAX_ITENS = 10;
 
 var ORIGEM_PUBLICA = 'Solicitado';
 var ORIGEM_INTERNA = 'Identificado pela manutenção';
@@ -76,7 +77,8 @@ function setup() {
     ['Administrativo', 'Sim'], ['Recepção / Portaria', 'Sim'], ['Recebimento', 'Sim'],
     ['Desossa', 'Sim'], ['Câmaras frias', 'Sim'], ['Embalagem', 'Sim'],
     ['Expedição / Carregamento', 'Sim'], ['Almoxarifado', 'Sim'], ['Refeitório', 'Sim'],
-    ['Vestiários / Banheiros', 'Sim'], ['Área externa / Pátio', 'Sim'], ['Outro', 'Sim']
+    ['Vestiários / Banheiros', 'Sim'], ['Área externa / Pátio', 'Sim'], ['Lava jato', 'Sim'],
+    ['Oficina', 'Sim'], ['Fábrica de linguiça', 'Sim'], ['Outro', 'Sim']
   ]);
 
   criarAba_(ss, ABA.CFG, ['Chave', 'Valor', 'Descricao'], [
@@ -185,7 +187,40 @@ function opcoes_() {
 }
 
 function abrir_(r) {
-  return criarChamado_(r, limpa_(r.nome, 80), ORIGEM_PUBLICA, ' (solicitante)');
+  var nome = limpa_(r.nome, 80);
+  if (!r.itens) return criarChamado_(r, nome, ORIGEM_PUBLICA, ' (solicitante)');
+  if (!(r.itens instanceof Array) || !r.itens.length) throw new Error('Informe ao menos um problema.');
+  if (r.itens.length > MAX_ITENS) throw new Error('Máximo de ' + MAX_ITENS + ' problemas por envio.');
+  // valida tudo antes de gravar, para não registrar só parte do envio
+  r.itens.forEach(function (it, i) {
+    try { validarChamado_(dadosItem_(r, it), nome); }
+    catch (e) { throw new Error('Problema ' + (i + 1) + ': ' + e.message); }
+  });
+  var prots = [], lote = '';
+  r.itens.forEach(function (it) {
+    var res = criarChamado_(dadosItem_(r, it), nome, ORIGEM_PUBLICA, ' (solicitante)', lote, r.itens.length > 1);
+    if (!lote && r.itens.length > 1) lote = res.protocolo;
+    prots.push(res.protocolo);
+  });
+  return { ok: true, protocolo: prots[0], protocolos: prots };
+}
+
+function dadosItem_(r, it) {
+  return { local: r.local, detalheLocal: r.detalheLocal, destino: r.destino, setor: r.setor,
+    categoria: it && it.categoria, urgencia: it && it.urgencia, descricao: it && it.descricao, foto: it && it.foto };
+}
+
+function validarChamado_(r, nome) {
+  var local = limpa_(r.local, 60), destino = limpa_(r.destino, 60);
+  var categoria = limpa_(r.categoria, 60), urgencia = limpa_(r.urgencia, 20), descricao = limpa_(r.descricao, 2000);
+  if (!nome || nome.length < 3) throw new Error('Informe seu nome.');
+  if (!local) throw new Error('Informe o local do problema.');
+  if (!descricao || descricao.length < 10) throw new Error('Descreva o problema (mínimo 10 caracteres).');
+  var op = opcoes_();
+  if (op.setores.indexOf(local) < 0) throw new Error('Local inválido.');
+  if (op.destinos.indexOf(destino) < 0) throw new Error('Área responsável inválida.');
+  if ((op.categorias[destino] || []).indexOf(categoria) < 0) throw new Error('Categoria inválida.');
+  if (URGENCIAS.indexOf(urgencia) < 0) throw new Error('Urgência inválida.');
 }
 
 /** Chamado aberto pelo próprio responsável, dentro da área restrita. */
@@ -195,7 +230,7 @@ function abrirInterno_(s, r) {
   return criarChamado_(r, s.nome, ORIGEM_INTERNA, ' (responsável)');
 }
 
-function criarChamado_(r, nome, origem, sufixoHist) {
+function criarChamado_(r, nome, origem, sufixoHist, lote, emLote) {
   var setor = limpa_(r.setor, 60);
   var local = limpa_(r.local, 60);
   var detalhe = limpa_(r.detalheLocal, 120);
@@ -228,12 +263,10 @@ function criarChamado_(r, nome, origem, sufixoHist) {
       Local: local, DetalheLocal: detalhe, AreaDestino: destino, Categoria: categoria,
       Urgencia: urgencia, Descricao: descricao, FotoId: fotoId, Status: 'Aberto',
       DataInicio: '', DataResolucao: '', Resolucao: '', UltimaAtualizacao: agora, AtualizadoPor: nome,
-      Origem: origem
+      Origem: origem, PrazoDefinido: '', Lote: emLote ? (lote || protocolo) : ''
     };
     var shc = sh_(ABA.CHAMADOS);
-    if (shc.getRange(1, COLS.length).getValue() !== 'Origem') {
-      shc.getRange(1, COLS.length).setValue('Origem').setFontWeight('bold').setBackground('#c8102e').setFontColor('#ffffff');
-    }
+    garantirCabecalho_(shc);
     shc.appendRow(COLS.map(function (c) { return linha[c]; }));
     registrarHist_(protocolo, nome + sufixoHist, '', 'Aberto', origem === ORIGEM_INTERNA ? 'Chamado aberto pelo responsável' : 'Chamado aberto');
     if (fotoId) {
@@ -242,6 +275,15 @@ function criarChamado_(r, nome, origem, sufixoHist) {
     return { ok: true, protocolo: protocolo };
   } finally {
     lock.releaseLock();
+  }
+}
+
+function garantirCabecalho_(sh) {
+  var atual = sh.getRange(1, 1, 1, COLS.length).getValues()[0];
+  for (var i = 0; i < COLS.length; i++) {
+    if (atual[i] !== COLS[i]) {
+      sh.getRange(1, i + 1).setValue(COLS[i]).setFontWeight('bold').setBackground('#c8102e').setFontColor('#ffffff');
+    }
   }
 }
 
@@ -260,7 +302,8 @@ function consultar_(protocolo) {
       protocolo: c.Protocolo, dataAbertura: iso_(c.DataAbertura), local: c.Local,
       detalheLocal: c.DetalheLocal, areaDestino: c.AreaDestino, categoria: c.Categoria,
       urgencia: c.Urgencia, descricao: c.Descricao, status: c.Status,
-      dataResolucao: iso_(c.DataResolucao), resolucao: c.Resolucao
+      dataResolucao: iso_(c.DataResolucao), resolucao: c.Resolucao,
+      prazoDefinido: iso_(c.PrazoDefinido)
     },
     historico: hist
   };
@@ -382,6 +425,14 @@ function atualizar_(s, r) {
   var novo = String(r.status || '');
   var coment = limpa_(r.comentario, 2000);
   if (STATUS.indexOf(novo) < 0) return { ok: false, erro: 'Status inválido.' };
+  var novaUrg = r.urgencia ? String(r.urgencia) : '';
+  if (novaUrg && URGENCIAS.indexOf(novaUrg) < 0) return { ok: false, erro: 'Urgência inválida.' };
+  var novoPrazo = null;
+  if (r.prazo) {
+    var m = String(r.prazo).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return { ok: false, erro: 'Data de prazo inválida.' };
+    novoPrazo = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59);
+  }
   if (novo === 'Resolvido' && coment.length < 5) return { ok: false, erro: 'Descreva o que foi feito para resolver.' };
   if (novo === 'Cancelado' && coment.length < 5) return { ok: false, erro: 'Informe o motivo do cancelamento.' };
   if (novo === 'Aguardando material/terceiro' && coment.length < 5) return { ok: false, erro: 'Informe o que está sendo aguardado.' };
@@ -393,7 +444,22 @@ function atualizar_(s, r) {
     if (!achado || (s.area !== '*' && achado.obj.AreaDestino !== s.area)) return { ok: false, erro: 'Chamado não encontrado.' };
     var c = achado.obj;
     var anterior = c.Status;
-    if (anterior === novo && !coment) return { ok: false, erro: 'Nada a atualizar.' };
+    var notas = [];
+    if (novaUrg && novaUrg !== c.Urgencia) {
+      notas.push('Urgência: ' + c.Urgencia + ' → ' + novaUrg);
+      c.Urgencia = novaUrg;
+    }
+    if (novoPrazo) {
+      var abertura = new Date(c.DataAbertura); abertura.setHours(0, 0, 0, 0);
+      if (novoPrazo < abertura) return { ok: false, erro: 'O prazo não pode ser anterior à abertura do chamado.' };
+      var antigo = c.PrazoDefinido instanceof Date ? c.PrazoDefinido : (c.PrazoDefinido ? new Date(c.PrazoDefinido) : null);
+      if (!antigo || antigo.getTime() !== novoPrazo.getTime()) {
+        if (antigo && coment.length < 5) return { ok: false, erro: 'Informe no comentário o motivo da alteração do prazo.' };
+        notas.push(antigo ? 'Prazo alterado: ' + dataBr_(antigo) + ' → ' + dataBr_(novoPrazo) : 'Prazo definido: ' + dataBr_(novoPrazo));
+        c.PrazoDefinido = novoPrazo;
+      }
+    }
+    if (anterior === novo && !coment && !notas.length) return { ok: false, erro: 'Nada a atualizar.' };
 
     var agora = new Date();
     if (novo !== 'Aberto' && novo !== 'Cancelado' && !c.DataInicio) c.DataInicio = agora;
@@ -408,8 +474,10 @@ function atualizar_(s, r) {
     c.UltimaAtualizacao = agora;
     c.AtualizadoPor = s.nome;
 
-    sh_(ABA.CHAMADOS).getRange(achado.linha, 1, 1, COLS.length).setValues([COLS.map(function (k) { return c[k]; })]);
-    registrarHist_(c.Protocolo, s.nome, anterior, novo, coment);
+    var shc = sh_(ABA.CHAMADOS);
+    garantirCabecalho_(shc);
+    shc.getRange(achado.linha, 1, 1, COLS.length).setValues([COLS.map(function (k) { return c[k] === undefined ? '' : c[k]; })]);
+    registrarHist_(c.Protocolo, s.nome, anterior === novo ? '' : anterior, novo, notas.concat(coment ? [coment] : []).join(' · '));
     return { ok: true, chamado: saida_(c) };
   } finally {
     lock.releaseLock();
@@ -474,7 +542,8 @@ function saida_(c) {
     descricao: c.Descricao, temFoto: !!c.FotoId, status: c.Status, dataInicio: iso_(c.DataInicio),
     dataResolucao: iso_(c.DataResolucao), resolucao: c.Resolucao,
     ultimaAtualizacao: iso_(c.UltimaAtualizacao), atualizadoPor: c.AtualizadoPor,
-    origem: c.Origem || ORIGEM_PUBLICA
+    origem: c.Origem || ORIGEM_PUBLICA,
+    prazoDefinido: iso_(c.PrazoDefinido), lote: c.Lote || ''
   };
 }
 
@@ -516,6 +585,8 @@ function limpa_(v, max) {
   if (/^[=+\-@]/.test(s)) s = "'" + s; // impede fórmula injetada na planilha
   return s;
 }
+
+function dataBr_(d) { return Utilities.formatDate(d, 'America/Sao_Paulo', 'dd/MM/yyyy'); }
 
 function soDigitos_(v) { return String(v == null ? '' : v).replace(/\D/g, ''); }
 
