@@ -257,7 +257,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
     <div id="lPasso2" style="display:none;">
       <p style="margin-bottom:14px;">Olá, <b id="lNome"></b>.</p>
       <div id="lPrimeiro" class="hint" style="display:none;margin-bottom:14px;background:var(--ybg);color:var(--yellow);padding:10px 12px;border-radius:8px;font-size:.84rem;">Primeiro acesso: defina uma senha de 4 dígitos. Ela será pedida nos próximos acessos.</div>
-      <div class="f"><label for="lSenha" id="lSenhaLbl">Senha</label><input type="password" id="lSenha" inputmode="numeric" maxlength="4" autocomplete="current-password"></div>
+      <div class="f"><label for="lSenha" id="lSenhaLbl">Senha</label><input type="password" id="lSenha" inputmode="numeric" maxlength="6" autocomplete="current-password"></div>
       <div class="f" id="wSenha2" style="display:none;"><label for="lSenha2">Confirme a senha</label><input type="password" id="lSenha2" inputmode="numeric" maxlength="4" autocomplete="new-password"></div>
       <button class="btn bp" id="btnEntrar">Entrar</button>
       <div style="text-align:center;margin-top:12px;"><button class="lnk" id="btnTrocaCpf">Usar outro CPF</button></div>
@@ -563,7 +563,7 @@ g('lCpf').addEventListener('input',function(){
 });
 g('lCpf').addEventListener('keydown',function(e){ if(e.key==='Enter') g('btnCpf').click(); });
 ['lSenha','lSenha2'].forEach(function(i){
-  g(i).addEventListener('input',function(){ this.value=this.value.replace(/\D/g,'').slice(0,4); });
+  g(i).addEventListener('input',function(){ this.value=this.value.replace(/\D/g,'').slice(0,(i==='lSenha'&&!PRIMEIRO)?6:4); });
   g(i).addEventListener('keydown',function(e){ if(e.key==='Enter') g('btnEntrar').click(); });
 });
 g('btnCpf').addEventListener('click',function(){
@@ -585,7 +585,7 @@ g('btnCpf').addEventListener('click',function(){
 });
 g('btnEntrar').addEventListener('click',function(){
   var btn=this, s=g('lSenha').value;
-  if(!/^\d{4}$/.test(s)){ toast('A senha tem 4 dígitos.'); return; }
+  if(PRIMEIRO ? !/^\d{4}$/.test(s) : !/^\d{4,6}$/.test(s)){ toast(PRIMEIRO?'A senha deve ter 4 dígitos.':'Senha inválida.'); return; }
   if(PRIMEIRO && s!==g('lSenha2').value){ toast('As senhas não conferem.'); return; }
   carregando(btn,true);
   apiPost({acao:PRIMEIRO?'definirSenha':'login',cpf:CPF,senha:s}).then(function(r){
