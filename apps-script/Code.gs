@@ -20,7 +20,8 @@ var ABA = {
   LOCAIS: 'Setores',
   DEST: 'AreasDestino',
   CAT: 'Categorias',
-  CFG: 'Config'
+  CFG: 'Config',
+  MAT: 'Materiais'
 };
 
 var COLS = ['Protocolo', 'DataAbertura', 'Solicitante', 'SetorSolicitante', 'Local', 'DetalheLocal',
@@ -32,6 +33,9 @@ var ORIGEM_PUBLICA = 'Solicitado';
 var ORIGEM_INTERNA = 'Identificado pela manutenção';
 
 var COLS_HIST = ['Protocolo', 'DataHora', 'Usuario', 'StatusAnterior', 'StatusNovo', 'Comentario'];
+var COLS_MAT = ['Id', 'Protocolo', 'Item', 'Quantidade', 'Unidade', 'Status', 'DataRegistro', 'RegistradoPor', 'DataCompra', 'CompradoPor'];
+var MAT_PENDENTE = 'A comprar', MAT_COMPRADO = 'Comprado', MAT_REMOVIDO = 'Removido';
+var MAX_MATERIAIS = 30;
 var COLS_USU = ['CPF', 'Nome', 'Perfil', 'AreaDestino', 'SenhaHash', 'Salt', 'Ativo'];
 
 var STATUS = ['Aberto', 'Em andamento', 'Aguardando material/terceiro', 'Resolvido', 'Cancelado'];
@@ -54,7 +58,7 @@ function setup() {
   criarAba_(ss, ABA.HIST, COLS_HIST, []);
 
   criarAba_(ss, ABA.USU, COLS_USU, [
-    ['14917223717', 'Jeferson', 'gestor', 'Manutenção', '', '', 'Sim'],
+    ['14917223717', 'Jefferson', 'gestor', 'Manutenção', '', '', 'Sim'],
     ['06612663111', 'Lucas', 'diretor', '*', '', '', 'Sim']
   ]);
   // CPF como texto, para preservar o zero à esquerda
@@ -159,6 +163,8 @@ function doPost(e) {
       case 'historico': return json_(historico_(sessao_(req.token), req.protocolo));
       case 'atualizar': return json_(atualizar_(sessao_(req.token), req));
       case 'foto': return json_(foto_(sessao_(req.token), req.protocolo));
+      case 'marcarComprado': return json_(marcarComprado_(sessao_(req.token), req.ids));
+      case 'removerMaterial': return json_(removerMaterial_(sessao_(req.token), req.id));
       case 'sair': CacheService.getScriptCache().remove('s_' + req.token); return json_({ ok: true });
       default: return json_({ ok: false, erro: 'Ação desconhecida.' });
     }
@@ -406,7 +412,10 @@ function listar_(s) {
     if (s.area !== '*' && c.AreaDestino !== s.area) continue;
     lista.push(saida_(c));
   }
-  return { ok: true, usuario: s, chamados: lista, sla: sla_(), status: STATUS, urgencias: URGENCIAS };
+  var visiveis = {};
+  lista.forEach(function (c) { visiveis[c.protocolo] = true; });
+  var mats = materiaisBrutos_().filter(function (m) { return visiveis[m.Protocolo] && m.Status !== MAT_REMOVIDO; }).map(saidaMat_);
+  return { ok: true, usuario: s, chamados: lista, materiais: mats, sla: sla_(), status: STATUS, urgencias: URGENCIAS };
 }
 
 function historico_(s, protocolo) {
@@ -435,7 +444,19 @@ function atualizar_(s, r) {
   }
   if (novo === 'Resolvido' && coment.length < 5) return { ok: false, erro: 'Descreva o que foi feito para resolver.' };
   if (novo === 'Cancelado' && coment.length < 5) return { ok: false, erro: 'Informe o motivo do cancelamento.' };
-  if (novo === 'Aguardando material/terceiro' && coment.length < 5) return { ok: false, erro: 'Informe o que está sendo aguardado.' };
+  var novosMat = [];
+  if (r.materiais && r.materiais.length) {
+    if (r.materiais.length > MAX_MATERIAIS) return { ok: false, erro: 'Máximo de ' + MAX_MATERIAIS + ' itens por atualização.' };
+    for (var mi = 0; mi < r.materiais.length; mi++) {
+      var it = r.materiais[mi] || {};
+      var nomeIt = limpa_(it.item, 80), un = limpa_(it.unidade, 12) || 'un';
+      var qtd = Number(String(it.quantidade).replace(',', '.'));
+      if (nomeIt.length < 2) return { ok: false, erro: 'Item ' + (mi + 1) + ': informe a descrição do material.' };
+      if (!(qtd > 0) || qtd > 99999) return { ok: false, erro: 'Item ' + (mi + 1) + ': quantidade inválida.' };
+      novosMat.push({ item: nomeIt, qtd: qtd, un: un });
+    }
+  }
+  if (novo === 'Aguardando material/terceiro' && coment.length < 5 && !novosMat.length) return { ok: false, erro: 'Liste os materiais a comprar ou informe o que está sendo aguardado.' };
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -459,6 +480,13 @@ function atualizar_(s, r) {
         c.PrazoDefinido = novoPrazo;
       }
     }
+    if (novosMat.length) {
+      var shm = matSheet_(), agoraM = new Date();
+      novosMat.forEach(function (m) {
+        shm.appendRow(['M' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), c.Protocolo, m.item, m.qtd, m.un, MAT_PENDENTE, agoraM, s.nome, '', '']);
+      });
+      notas.push('Materiais a comprar: ' + novosMat.map(function (m) { return m.item + ' (' + fmtQtd_(m.qtd) + ' ' + m.un + ')'; }).join(', '));
+    }
     if (anterior === novo && !coment && !notas.length) return { ok: false, erro: 'Nada a atualizar.' };
 
     var agora = new Date();
@@ -479,6 +507,84 @@ function atualizar_(s, r) {
     shc.getRange(achado.linha, 1, 1, COLS.length).setValues([COLS.map(function (k) { return c[k] === undefined ? '' : c[k]; })]);
     registrarHist_(c.Protocolo, s.nome, anterior === novo ? '' : anterior, novo, notas.concat(coment ? [coment] : []).join(' · '));
     return { ok: true, chamado: saida_(c) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/* ===================== MATERIAIS ===================== */
+
+function matSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(ABA.MAT);
+  if (!sh) sh = criarAba_(ss, ABA.MAT, COLS_MAT, []);
+  return sh;
+}
+
+function materiaisBrutos_() {
+  var dados = matSheet_().getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < dados.length; i++) {
+    if (!dados[i][0]) continue;
+    var m = { _linha: i + 1 };
+    COLS_MAT.forEach(function (k, j) { m[k] = dados[i][j]; });
+    out.push(m);
+  }
+  return out;
+}
+
+function saidaMat_(m) {
+  return { id: String(m.Id), protocolo: m.Protocolo, item: m.Item, quantidade: Number(m.Quantidade) || 0,
+    unidade: m.Unidade, status: m.Status, dataRegistro: iso_(m.DataRegistro), dataCompra: iso_(m.DataCompra) };
+}
+
+function fmtQtd_(q) { return String(Math.round(q * 100) / 100).replace('.', ','); }
+
+function podeVerProtocolo_(s, protocolo) {
+  if (s.area === '*') return true;
+  var a = buscar_(String(protocolo || '').toUpperCase());
+  return !!(a && a.obj.AreaDestino === s.area);
+}
+
+function marcarComprado_(s, ids) {
+  if (!s.podeEditar) return { ok: false, erro: 'Seu perfil permite apenas visualização.' };
+  if (!(ids instanceof Array) || !ids.length) return { ok: false, erro: 'Selecione ao menos um item.' };
+  var alvo = {};
+  ids.forEach(function (id) { alvo[String(id)] = true; });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sh = matSheet_(), agora = new Date(), porProt = {}, n = 0;
+    materiaisBrutos_().forEach(function (m) {
+      if (!alvo[String(m.Id)] || m.Status !== MAT_PENDENTE) return;
+      if (!podeVerProtocolo_(s, m.Protocolo)) return;
+      sh.getRange(m._linha, 6).setValue(MAT_COMPRADO);
+      sh.getRange(m._linha, 9, 1, 2).setValues([[agora, s.nome]]);
+      (porProt[m.Protocolo] = porProt[m.Protocolo] || []).push(m.Item + ' (' + fmtQtd_(Number(m.Quantidade)) + ' ' + m.Unidade + ')');
+      n++;
+    });
+    Object.keys(porProt).forEach(function (p) {
+      var c = buscar_(p);
+      registrarHist_(p, s.nome, '', c ? c.obj.Status : '', 'Materiais comprados: ' + porProt[p].join(', '));
+    });
+    return { ok: true, marcados: n };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function removerMaterial_(s, id) {
+  if (!s.podeEditar) return { ok: false, erro: 'Seu perfil permite apenas visualização.' };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var m = materiaisBrutos_().filter(function (x) { return String(x.Id) === String(id); })[0];
+    if (!m || !podeVerProtocolo_(s, m.Protocolo)) return { ok: false, erro: 'Item não encontrado.' };
+    if (m.Status !== MAT_PENDENTE) return { ok: false, erro: 'Só é possível remover itens ainda não comprados.' };
+    matSheet_().getRange(m._linha, 6).setValue(MAT_REMOVIDO);
+    var c = buscar_(m.Protocolo);
+    registrarHist_(m.Protocolo, s.nome, '', c ? c.obj.Status : '', 'Material removido da lista: ' + m.Item);
+    return { ok: true };
   } finally {
     lock.releaseLock();
   }
