@@ -142,6 +142,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .ci-nome{font-weight:700;font-size:.95rem;}
 .ci-qtd{font-weight:800;font-size:1.05rem;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .ci-prot{font-size:.78rem;color:var(--muted);margin-top:3px;}
+.ci-av{display:inline-block;background:#f1f5f9;color:#374151;border-radius:10px;padding:1px 8px;margin:2px 4px 0 0;font-size:.76rem;}
+.ci-prot .ci-av .lnk{font-size:.74rem;margin-left:6px;font-family:inherit;color:var(--muted);}
 .ci-prot button{background:none;border:none;color:var(--primary);font-family:Consolas,monospace;font-size:.78rem;cursor:pointer;padding:0;text-decoration:underline;}
 .mat-row{display:grid;grid-template-columns:1fr 90px 90px auto;gap:8px;margin-bottom:8px;align-items:center;}
 .mat-row input{padding:9px 10px;font-size:.92rem;}
@@ -356,6 +358,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
       <div class="cbar">
         <div><b id="cResumo">Lista de compras</b><div class="hint" id="cSub">Materiais pendentes dos chamados em aberto.</div></div>
         <div class="cacoes">
+          <button class="btn bo sm" id="btnAvulso" type="button" style="display:none">+ Item avulso</button>
           <button class="btn sm wa" id="btnWa" type="button">Enviar no WhatsApp</button>
           <button class="btn bo sm" id="btnCopLista" type="button">Copiar lista</button>
         </div>
@@ -894,42 +897,50 @@ function gruposCompra(){
   var abertos={}; DADOS.forEach(function(c){ if(ABERTOS.indexOf(c.status)>=0) abertos[c.protocolo]=c; });
   var gr={};
   MATS.forEach(function(m){
-    if(m.status!=='A comprar' || !abertos[m.protocolo]) return;
-    var k=chaveItem(m), c=abertos[m.protocolo];
-    if(!gr[k]) gr[k]={item:m.item,unidade:m.unidade,qtd:0,ids:[],prots:[],rank:9,urg:'Normal'};
+    var av=(m.protocolo==='AVULSO');
+    if(m.status!=='A comprar' || (!av && !abertos[m.protocolo])) return;
+    var k=chaveItem(m), urg=av?'Normal':abertos[m.protocolo].urgencia;
+    if(!gr[k]) gr[k]={item:m.item,unidade:m.unidade,qtd:0,ids:[],prots:[],avulsos:[],rank:9,urg:'Normal'};
     var x=gr[k]; x.qtd+=Number(m.quantidade)||0; x.ids.push(m.id);
-    if(x.prots.indexOf(m.protocolo)<0) x.prots.push(m.protocolo);
-    if(RANK_U[c.urgencia]<x.rank){ x.rank=RANK_U[c.urgencia]; x.urg=c.urgencia; }
+    if(av) x.avulsos.push(m);
+    else if(x.prots.indexOf(m.protocolo)<0) x.prots.push(m.protocolo);
+    if(RANK_U[urg]<x.rank){ x.rank=RANK_U[urg]; x.urg=urg; }
   });
   return Object.keys(gr).map(function(k){return gr[k];}).sort(function(a,b){ return a.rank-b.rank || a.item.localeCompare(b.item,'pt-BR'); });
 }
 function renderCompras(){
-  var gs=gruposCompra(), nProt={};
-  gs.forEach(function(x){ x.prots.forEach(function(p){ nProt[p]=1; }); });
+  var gs=gruposCompra(), nProt={}, nAv=0;
+  gs.forEach(function(x){ x.prots.forEach(function(p){ nProt[p]=1; }); nAv+=x.avulsos.length; });
   var np=Object.keys(nProt).length;
   g('tbCompras').textContent=gs.length; g('tbCompras').style.display=gs.length?'':'none';
   g('cResumo').textContent=gs.length?gs.length+' ite'+(gs.length===1?'m':'ns')+' a comprar':'Nada a comprar';
-  g('cSub').textContent=gs.length?'De '+np+' chamado'+(np===1?'':'s')+' em aberto · itens iguais já somados · mais urgentes primeiro':'Os materiais listados ao marcar um chamado como "Aguardando material/terceiro" aparecem aqui.';
+  g('cSub').textContent=gs.length?(np?'De '+np+' chamado'+(np===1?'':'s')+' em aberto':'')+(np&&nAv?' + ':'')+(nAv?nAv+' avulso'+(nAv>1?'s':''):'')+' · itens iguais já somados · mais urgentes primeiro':'Os materiais listados ao marcar um chamado como "Aguardando material/terceiro" aparecem aqui.';
   g('btnWa').disabled=!gs.length; g('btnCopLista').disabled=!gs.length;
   var edit=USU&&USU.podeEditar;
+  g('btnAvulso').style.display=edit?'':'none';
   g('cRodape').style.display=(gs.length&&edit)?'':'none';
   g('cTodos').checked=false; g('btnComprado').disabled=true;
   g('cItens').innerHTML=gs.map(function(x,i){
     return '<div class="ci u-'+esc(x.urg)+'">'+
       (edit?'<input type="checkbox" class="cSel" data-i="'+i+'" style="width:20px;height:20px;accent-color:var(--primary)" aria-label="Selecionar '+esc(x.item)+'">':'<span></span>')+
       '<div><div class="ci-nome">'+esc(x.item)+' '+(x.urg!=='Normal'?chipUr(x.urg):'')+'</div>'+
-      '<div class="ci-prot">Chamado'+(x.prots.length>1?'s':'')+': '+x.prots.map(function(p){return '<button data-p="'+esc(p)+'">'+esc(p)+'</button>';}).join(', ')+'</div></div>'+
+      '<div class="ci-prot">'+(x.prots.length?'Chamado'+(x.prots.length>1?'s':'')+': '+x.prots.map(function(p){return '<button data-p="'+esc(p)+'">'+esc(p)+'</button>';}).join(', '):'')+
+        (x.avulsos.length?(x.prots.length?'<br>':'')+x.avulsos.map(function(m){
+          return '<span class="ci-av" title="Registrado por '+esc(m.registradoPor)+'">avulso'+(x.avulsos.length>1||x.prots.length?' · '+fQtd(m.quantidade)+' '+esc(m.unidade):'')+': '+esc(m.motivo)+
+            (edit?'<button class="lnk av-rm" data-id="'+esc(m.id)+'" type="button">remover</button>':'')+'</span>';
+        }).join(''):'')+'</div></div>'+
       '<div class="ci-qtd">'+fQtd(x.qtd)+' '+esc(x.unidade)+'</div></div>';
   }).join('')||'<div class="card vazio">Nenhum material pendente.</div>';
   g('cItens').querySelectorAll('.ci-prot button').forEach(function(b){ b.addEventListener('click',function(){ abrirDetalhe(b.dataset.p); }); });
   g('cItens').querySelectorAll('.cSel').forEach(function(cb){ cb.addEventListener('change',atuSel); });
+  g('cItens').querySelectorAll('.av-rm').forEach(function(b){ b.addEventListener('click',function(){ removerMat(b.dataset.id,null,b); }); });
   // comprados recentes (14 dias)
   var lim=Date.now()-14*864e5;
   var rec=MATS.filter(function(m){ return m.status==='Comprado' && m.dataCompra && new Date(m.dataCompra).getTime()>=lim; })
     .sort(function(a,b){ return new Date(b.dataCompra)-new Date(a.dataCompra); });
   g('cComprados').style.display=rec.length?'':'none';
   g('cComprados').innerHTML='<h3>Comprados nos últimos 14 dias</h3><ul class="mat-l">'+rec.map(function(m){
-    return '<li><span>'+esc(m.item)+' — '+fQtd(m.quantidade)+' '+esc(m.unidade)+' <span class="hint">('+esc(m.protocolo)+')</span></span><span class="hint">'+fData(m.dataCompra,true)+'</span></li>';
+    return '<li><span>'+esc(m.item)+' — '+fQtd(m.quantidade)+' '+esc(m.unidade)+' <span class="hint">('+(m.protocolo==='AVULSO'?'avulso: '+esc(m.motivo):esc(m.protocolo))+')</span></span><span class="hint">'+fData(m.dataCompra,true)+'</span></li>';
   }).join('')+'</ul>';
   GRUPOS=gs;
 }
@@ -957,7 +968,10 @@ function textoLista(){
   var hoje=new Date().toLocaleDateString('pt-BR');
   var t='*Lista de compras — Manutenção FriPremium*\n'+hoje+'\n';
   var blocos={'Crítica':[],'Alta':[],'Normal':[]};
-  GRUPOS.forEach(function(x){ blocos[x.urg].push('• '+x.item+' — '+fQtd(x.qtd)+' '+x.unidade+'  ('+x.prots.map(function(p){return p.replace(/^.*-(\d+)$/,'#$1');}).join(', ')+')'); });
+  GRUPOS.forEach(function(x){
+    var refs=x.prots.map(function(p){return p.replace(/^.*-(\d+)$/,'#$1');}).concat(x.avulsos.length?['avulso']:[]);
+    blocos[x.urg].push('• '+x.item+' — '+fQtd(x.qtd)+' '+x.unidade+'  ('+refs.join(', ')+')');
+  });
   [['Crítica','🔴 *URGENTE*'],['Alta','🟠 *Prioridade alta*'],['Normal','⚪ *Demais itens*']].forEach(function(b){
     if(blocos[b[0]].length) t+='\n'+b[1]+'\n'+blocos[b[0]].join('\n')+'\n';
   });
@@ -971,13 +985,44 @@ g('btnCopLista').addEventListener('click',function(){
   var t=textoLista();
   try{ navigator.clipboard.writeText(t).then(function(){ toast('Lista copiada.'); },function(){ toast('Não foi possível copiar.'); }); }catch(e){ toast('Não foi possível copiar.'); }
 });
+g('btnAvulso').addEventListener('click',abrirAvulso);
+function abrirAvulso(){
+  var h='<button class="mclose" id="mX" aria-label="Fechar">×</button>';
+  h+='<h2 style="font-size:1.1rem;color:var(--primary);margin-bottom:4px;">Item avulso</h2>';
+  h+='<p class="hint" style="margin-bottom:16px;">Material para comprar sem vínculo com chamado, como reposição de estoque. Entra na lista de compras junto com os demais.</p>';
+  h+='<div class="f"><label>Material *</label><div id="matRows"></div></div>';
+  h+='<div class="f"><label for="avMot">Motivo *</label><input type="text" id="avMot" maxlength="200" placeholder="Ex.: reposição de estoque, ferramenta da oficina"></div>';
+  h+='<button class="btn bp" id="avSalvar">Adicionar à lista</button>';
+  g('mBox').innerHTML=h; g('modal').classList.add('on'); document.body.style.overflow='hidden';
+  g('mX').addEventListener('click',fecharModal);
+  addMatRow();
+  var rm=document.querySelector('#matRows .mat-row button'); if(rm) rm.style.visibility='hidden';
+  g('avMot').addEventListener('input',function(){ this.classList.remove('erro'); });
+  g('avSalvar').addEventListener('click',function(){
+    var btn=this, row=document.querySelector('#matRows .mat-row');
+    var d={acao:'addAvulso',token:ss('fp_tok'),item:row.querySelector('.mItem').value.trim(),quantidade:row.querySelector('.mQtd').value.trim(),
+      unidade:row.querySelector('.mUn').value.trim()||'un',motivo:g('avMot').value.trim()};
+    var erro=false;
+    if(d.item.length<2){ row.querySelector('.mItem').classList.add('erro'); erro=true; }
+    if(!(Number(d.quantidade.replace(',','.'))>0)){ row.querySelector('.mQtd').classList.add('erro'); erro=true; }
+    if(d.motivo.length<5){ g('avMot').classList.add('erro'); erro=true; }
+    if(erro){ toast('Preencha material, quantidade e motivo.'); return; }
+    carregando(btn,true,'Salvando…');
+    apiPost(d).then(function(r){
+      carregando(btn,false);
+      if(r.sessaoExpirada){ fecharModal(); sair('Sessão expirada. Entre novamente.'); return; }
+      if(!r.ok){ toast(r.erro); return; }
+      fecharModal(); toast('Item adicionado à lista de compras.'); carregarDados();
+    }).catch(function(e){ carregando(btn,false); falhaRede(e); });
+  });
+}
 function removerMat(id,prot,btn){
   carregando(btn,true,'…');
   apiPost({acao:'removerMaterial',token:ss('fp_tok'),id:id}).then(function(r){
     if(r.sessaoExpirada){ fecharModal(); sair('Sessão expirada. Entre novamente.'); return; }
     if(!r.ok){ carregando(btn,false); toast(r.erro); return; }
     MATS=MATS.filter(function(m){ return m.id!==id; });
-    toast('Item removido da lista.'); renderCompras(); renderLista(); abrirDetalhe(prot);
+    toast('Item removido da lista.'); renderCompras(); renderLista(); if(prot) abrirDetalhe(prot);
   }).catch(function(e){ carregando(btn,false); falhaRede(e); });
 }
 

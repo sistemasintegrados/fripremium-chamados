@@ -33,7 +33,8 @@ var ORIGEM_PUBLICA = 'Solicitado';
 var ORIGEM_INTERNA = 'Identificado pela manutenção';
 
 var COLS_HIST = ['Protocolo', 'DataHora', 'Usuario', 'StatusAnterior', 'StatusNovo', 'Comentario'];
-var COLS_MAT = ['Id', 'Protocolo', 'Item', 'Quantidade', 'Unidade', 'Status', 'DataRegistro', 'RegistradoPor', 'DataCompra', 'CompradoPor'];
+var COLS_MAT = ['Id', 'Protocolo', 'Item', 'Quantidade', 'Unidade', 'Status', 'DataRegistro', 'RegistradoPor', 'DataCompra', 'CompradoPor', 'Motivo'];
+var AVULSO = 'AVULSO';
 var MAT_PENDENTE = 'A comprar', MAT_COMPRADO = 'Comprado', MAT_REMOVIDO = 'Removido';
 var MAX_MATERIAIS = 30;
 var COLS_USU = ['CPF', 'Nome', 'Perfil', 'AreaDestino', 'SenhaHash', 'Salt', 'Ativo'];
@@ -165,6 +166,7 @@ function doPost(e) {
       case 'foto': return json_(foto_(sessao_(req.token), req.protocolo));
       case 'marcarComprado': return json_(marcarComprado_(sessao_(req.token), req.ids));
       case 'removerMaterial': return json_(removerMaterial_(sessao_(req.token), req.id));
+      case 'addAvulso': return json_(addAvulso_(sessao_(req.token), req));
       case 'sair': CacheService.getScriptCache().remove('s_' + req.token); return json_({ ok: true });
       default: return json_({ ok: false, erro: 'Ação desconhecida.' });
     }
@@ -414,7 +416,7 @@ function listar_(s) {
   }
   var visiveis = {};
   lista.forEach(function (c) { visiveis[c.protocolo] = true; });
-  var mats = materiaisBrutos_().filter(function (m) { return visiveis[m.Protocolo] && m.Status !== MAT_REMOVIDO; }).map(saidaMat_);
+  var mats = materiaisBrutos_().filter(function (m) { return (visiveis[m.Protocolo] || m.Protocolo === AVULSO) && m.Status !== MAT_REMOVIDO; }).map(saidaMat_);
   return { ok: true, usuario: s, chamados: lista, materiais: mats, sla: sla_(), status: STATUS, urgencias: URGENCIAS };
 }
 
@@ -483,7 +485,7 @@ function atualizar_(s, r) {
     if (novosMat.length) {
       var shm = matSheet_(), agoraM = new Date();
       novosMat.forEach(function (m) {
-        shm.appendRow(['M' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), c.Protocolo, m.item, m.qtd, m.un, MAT_PENDENTE, agoraM, s.nome, '', '']);
+        shm.appendRow(['M' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), c.Protocolo, m.item, m.qtd, m.un, MAT_PENDENTE, agoraM, s.nome, '', '', '']);
       });
       notas.push('Materiais a comprar: ' + novosMat.map(function (m) { return m.item + ' (' + fmtQtd_(m.qtd) + ' ' + m.un + ')'; }).join(', '));
     }
@@ -518,6 +520,9 @@ function matSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(ABA.MAT);
   if (!sh) sh = criarAba_(ss, ABA.MAT, COLS_MAT, []);
+  if (sh.getRange(1, COLS_MAT.length).getValue() !== COLS_MAT[COLS_MAT.length - 1]) {
+    sh.getRange(1, COLS_MAT.length).setValue(COLS_MAT[COLS_MAT.length - 1]).setFontWeight('bold').setBackground('#c8102e').setFontColor('#ffffff');
+  }
   return sh;
 }
 
@@ -535,13 +540,14 @@ function materiaisBrutos_() {
 
 function saidaMat_(m) {
   return { id: String(m.Id), protocolo: m.Protocolo, item: m.Item, quantidade: Number(m.Quantidade) || 0,
-    unidade: m.Unidade, status: m.Status, dataRegistro: iso_(m.DataRegistro), dataCompra: iso_(m.DataCompra) };
+    unidade: m.Unidade, status: m.Status, dataRegistro: iso_(m.DataRegistro), dataCompra: iso_(m.DataCompra),
+    motivo: m.Motivo || '', registradoPor: m.RegistradoPor || '' };
 }
 
 function fmtQtd_(q) { return String(Math.round(q * 100) / 100).replace('.', ','); }
 
 function podeVerProtocolo_(s, protocolo) {
-  if (s.area === '*') return true;
+  if (s.area === '*' || protocolo === AVULSO) return true;
   var a = buscar_(String(protocolo || '').toUpperCase());
   return !!(a && a.obj.AreaDestino === s.area);
 }
@@ -564,10 +570,30 @@ function marcarComprado_(s, ids) {
       n++;
     });
     Object.keys(porProt).forEach(function (p) {
+      if (p === AVULSO) return;
       var c = buscar_(p);
       registrarHist_(p, s.nome, '', c ? c.obj.Status : '', 'Materiais comprados: ' + porProt[p].join(', '));
     });
     return { ok: true, marcados: n };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Item de compra sem chamado (ex.: reposição de estoque). Motivo obrigatório. */
+function addAvulso_(s, r) {
+  if (!s.podeEditar) return { ok: false, erro: 'Seu perfil permite apenas visualização.' };
+  var item = limpa_(r.item, 80), un = limpa_(r.unidade, 12) || 'un', motivo = limpa_(r.motivo, 200);
+  var qtd = Number(String(r.quantidade).replace(',', '.'));
+  if (item.length < 2) return { ok: false, erro: 'Informe a descrição do material.' };
+  if (!(qtd > 0) || qtd > 99999) return { ok: false, erro: 'Quantidade inválida.' };
+  if (motivo.length < 5) return { ok: false, erro: 'Informe o motivo da compra (ex.: reposição de estoque).' };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var id = 'M' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+    matSheet_().appendRow([id, AVULSO, item, qtd, un, MAT_PENDENTE, new Date(), s.nome, '', '', motivo]);
+    return { ok: true, id: id };
   } finally {
     lock.releaseLock();
   }
@@ -582,6 +608,7 @@ function removerMaterial_(s, id) {
     if (!m || !podeVerProtocolo_(s, m.Protocolo)) return { ok: false, erro: 'Item não encontrado.' };
     if (m.Status !== MAT_PENDENTE) return { ok: false, erro: 'Só é possível remover itens ainda não comprados.' };
     matSheet_().getRange(m._linha, 6).setValue(MAT_REMOVIDO);
+    if (m.Protocolo === AVULSO) return { ok: true };
     var c = buscar_(m.Protocolo);
     registrarHist_(m.Protocolo, s.nome, '', c ? c.obj.Status : '', 'Material removido da lista: ' + m.Item);
     return { ok: true };
